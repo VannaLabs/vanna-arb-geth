@@ -24,6 +24,7 @@ const _ = grpc.SupportPackageIsVersion7
 type InferenceClient interface {
 	// Runs a model inference
 	RunInference(ctx context.Context, in *InferenceParameters, opts ...grpc.CallOption) (*InferenceResult, error)
+	RunZKInference(ctx context.Context, in *InferenceParameters, opts ...grpc.CallOption) (*ZKInferenceResult, error)
 	RunPipeline(ctx context.Context, in *PipelineParameters, opts ...grpc.CallOption) (*InferenceResult, error)
 }
 
@@ -38,6 +39,15 @@ func NewInferenceClient(cc grpc.ClientConnInterface) InferenceClient {
 func (c *inferenceClient) RunInference(ctx context.Context, in *InferenceParameters, opts ...grpc.CallOption) (*InferenceResult, error) {
 	out := new(InferenceResult)
 	err := c.cc.Invoke(ctx, "/inference.Inference/RunInference", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *inferenceClient) RunZKInference(ctx context.Context, in *InferenceParameters, opts ...grpc.CallOption) (*ZKInferenceResult, error) {
+	out := new(ZKInferenceResult)
+	err := c.cc.Invoke(ctx, "/inference.Inference/RunZKInference", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -59,6 +69,7 @@ func (c *inferenceClient) RunPipeline(ctx context.Context, in *PipelineParameter
 type InferenceServer interface {
 	// Runs a model inference
 	RunInference(context.Context, *InferenceParameters) (*InferenceResult, error)
+	RunZKInference(context.Context, *InferenceParameters) (*ZKInferenceResult, error)
 	RunPipeline(context.Context, *PipelineParameters) (*InferenceResult, error)
 	mustEmbedUnimplementedInferenceServer()
 }
@@ -69,6 +80,9 @@ type UnimplementedInferenceServer struct {
 
 func (UnimplementedInferenceServer) RunInference(context.Context, *InferenceParameters) (*InferenceResult, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RunInference not implemented")
+}
+func (UnimplementedInferenceServer) RunZKInference(context.Context, *InferenceParameters) (*ZKInferenceResult, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RunZKInference not implemented")
 }
 func (UnimplementedInferenceServer) RunPipeline(context.Context, *PipelineParameters) (*InferenceResult, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RunPipeline not implemented")
@@ -104,6 +118,24 @@ func _Inference_RunInference_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Inference_RunZKInference_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InferenceParameters)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(InferenceServer).RunZKInference(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/inference.Inference/RunZKInference",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(InferenceServer).RunZKInference(ctx, req.(*InferenceParameters))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Inference_RunPipeline_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PipelineParameters)
 	if err := dec(in); err != nil {
@@ -132,6 +164,10 @@ var Inference_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RunInference",
 			Handler:    _Inference_RunInference_Handler,
+		},
+		{
+			MethodName: "RunZKInference",
+			Handler:    _Inference_RunZKInference_Handler,
 		},
 		{
 			MethodName: "RunPipeline",
