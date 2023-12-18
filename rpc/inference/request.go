@@ -24,7 +24,13 @@ protoc --go_out=. --go_opt=paths=source_relative \
     inference.proto
 */
 
-type EngineNode struct {
+const (
+	Inference   = "inference"
+	ZKInference = "zkinference"
+	OPInference = "opinference"
+)
+
+type InferenceNode struct {
 	PublicKey  string
 	IPAddress  string
 	EthAddress string
@@ -32,12 +38,21 @@ type EngineNode struct {
 }
 
 type InferenceTx struct {
-	Hash     string
-	Seed     string
-	Pipeline string
-	Model    string
-	Params   string
-	TxType   string
+	Hash      string
+	Seed      string
+	Pipeline  string
+	Model     string
+	Params    string
+	TxType    string
+	Value     string
+	ZKPayload ZKP
+}
+
+type ZKP struct {
+	proof    string
+	settings string
+	vk       []byte
+	srs      string
 }
 
 type InferenceConsolidation struct {
@@ -52,8 +67,8 @@ type InferenceConsensus struct {
 	mu        sync.Mutex
 }
 
-func (ic InferenceConsolidation) attest(threshold float32, node EngineNode, result InferenceResult, nodeWeight float32) bool {
-	if !node.validateInference(result) {
+func (ic InferenceConsolidation) attest(threshold float32, node InferenceNode, result InferenceResult, nodeWeight float32) bool {
+	if !node.inferenceCheck(result) {
 		return ic.Weight >= threshold
 	}
 	ic.Attestations = append(ic.Attestations, node.PublicKey)
@@ -61,7 +76,7 @@ func (ic InferenceConsolidation) attest(threshold float32, node EngineNode, resu
 	return ic.Weight >= threshold
 }
 
-func (engineNode EngineNode) validateInference(result InferenceResult) bool {
+func (engineNode InferenceNode) inferenceCheck(result InferenceResult) bool {
 	return true
 }
 
@@ -80,10 +95,10 @@ func NewRequestClient(portNum int) *RequestClient {
 
 // Emit inference transaction
 func (rc RequestClient) Emit(tx InferenceTx) (string, error) {
+	nodes := getNodes(tx.TxType)
 	consensus := InferenceConsensus{resultMap: make(map[string]InferenceConsolidation)}
 	resultChan := make(chan string)
-	errorChan := make(chan bool)
-	nodes := getNodes()
+	errorChan := make(chan string)
 	var wg sync.WaitGroup
 	for _, node := range nodes {
 		wg.Add(1)
@@ -93,26 +108,25 @@ func (rc RequestClient) Emit(tx InferenceTx) (string, error) {
 	timestamp := time.Now().Unix()
 	go func() {
 		timeout := transactionTimeout(tx)
-		for time.Now().Unix()-timestamp < timeout {
-			time.Sleep(3 * time.Second)
+		for time.Now().Unix() < (timestamp + transactionTimeout(tx)) {
+			time.Sleep(time.Duration(1))
 		}
-		errorChan <- true
+		errorChan <- "Timeout exceeded " + strconv.FormatInt(timeout, 10) + " seconds"
 		wg.Wait()
 		close(resultChan)
 	}()
 
 	select {
 	case output := <-resultChan:
-		triggerEvaluate(consensus)
+		triggerEvaluate(tx, consensus)
 		return output, nil
 	case <-errorChan:
-		triggerEvaluate(consensus)
-		return "INFERENCE ERROR", errors.New("Could not reach consensus")
+		triggerEvaluate(tx, consensus)
+		return "INFERENCE ERROR", errors.New("Could not reach inference consensus")
 	}
-
 }
 
-func (rc RequestClient) emitToNode(consensus InferenceConsensus, node EngineNode, tx InferenceTx, resultChan chan<- string, errorChan chan<- bool) {
+func (rc RequestClient) emitToNode(consensus InferenceConsensus, node InferenceNode, tx InferenceTx, resultChan chan<- string, errorChan chan<- string) {
 	serverAddr := getAddress(node.IPAddress, rc.port)
 	opts := getDialOptions()
 	conn, err := grpc.Dial(serverAddr, opts...)
@@ -123,14 +137,20 @@ func (rc RequestClient) emitToNode(consensus InferenceConsensus, node EngineNode
 	client := NewInferenceClient(conn)
 	var result InferenceResult
 	var inferErr error
-	if tx.TxType == "inference" {
+	if tx.TxType == Inference {
 		result, inferErr = RunInference(client, tx)
+	} else if tx.TxType == ZKInference {
+		var zkresult ZKInferenceResult
+		zkresult, inferErr = RunZKInference(client, tx)
+		if !validateZKProof(zkresult) {
+			errorChan <- "ZKML Proof cannot be validated"
+		}
+		result = InferenceResult{Tx: zkresult.Tx, Node: zkresult.Node, Value: zkresult.Value}
 	} else if tx.TxType == "pipeline" {
 		result, inferErr = RunPipeline(client, tx)
 	}
 	if inferErr != nil {
-		errorChan <- true
-		//log.Fatalf("RPC Inference Failed: %v", err)
+		errorChan <- inferErr.Error()
 		return
 	}
 	valid, err := validateSignature(node, result)
@@ -159,7 +179,19 @@ func RunInference(client InferenceClient, tx InferenceTx) (InferenceResult, erro
 	defer cancel()
 	result, err := client.RunInference(ctx, inferenceParams)
 	if err != nil {
-		return InferenceResult{}, errors.New("Inference Execution Failed")
+		return InferenceResult{}, errors.New(err.Error())
+	}
+	return *result, nil
+}
+
+// Runs zkml-secured inference request via gRPC
+func RunZKInference(client InferenceClient, tx InferenceTx) (ZKInferenceResult, error) {
+	inferenceParams := buildInferenceParameters(tx)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(transactionTimeout(tx))*time.Second)
+	defer cancel()
+	result, err := client.RunZKInference(ctx, inferenceParams)
+	if err != nil {
+		return ZKInferenceResult{}, errors.New(err.Error())
 	}
 	return *result, nil
 }
@@ -167,7 +199,7 @@ func RunInference(client InferenceClient, tx InferenceTx) (InferenceResult, erro
 // Runs pipeline  request via gRPC
 func RunPipeline(client InferenceClient, tx InferenceTx) (InferenceResult, error) {
 	pipelineParams := buildPipelineParameters(tx)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(60*time.Second))
 	defer cancel()
 	result, err := client.RunPipeline(ctx, pipelineParams)
 	if err != nil {
@@ -177,12 +209,12 @@ func RunPipeline(client InferenceClient, tx InferenceTx) (InferenceResult, error
 }
 
 // Get IP addresses of inference nodes on network
-func getNodes() []EngineNode {
+func getNodes(txType string) []InferenceNode {
 	nodeInfo := engine.NodeLookup()
-	nodes := []EngineNode{}
+	nodes := []InferenceNode{}
 	for i := 0; i < len(nodeInfo); i++ {
 		nodes = append(nodes,
-			EngineNode{
+			InferenceNode{
 				PublicKey:  nodeInfo[i].PublicKey,
 				IPAddress:  nodeInfo[i].IP,
 				EthAddress: nodeInfo[i].Address,
@@ -217,7 +249,7 @@ func buildPipelineParameters(tx InferenceTx) *PipelineParameters {
 	}
 }
 
-func validateSignature(engineNode EngineNode, result InferenceResult) (bool, error) {
+func validateSignature(engineNode InferenceNode, result InferenceResult) (bool, error) {
 	return true, nil
 }
 
@@ -240,11 +272,20 @@ func HexToBytes(hexString string) ([]byte, error) {
 	return bytes, nil
 }
 
-// Evaluates node behavior
-func triggerEvaluate(ic InferenceConsensus) {
+// Evaluates inference node behavior
+func triggerEvaluate(tx InferenceTx, ic InferenceConsensus) {
 	return
 }
 
 func transactionTimeout(tx InferenceTx) int64 {
-	return 3
+	switch tx.TxType {
+	case Inference:
+		return 10
+	case OPInference:
+		return 10
+	case ZKInference:
+		return 90
+	default:
+		return 10
+	}
 }
