@@ -25,9 +25,11 @@ protoc --go_out=. --go_opt=paths=source_relative \
 */
 
 const (
-	Inference   = "inference"
-	ZKInference = "zkinference"
-	OPInference = "opinference"
+	Inference         = "Vanilla-Inference"
+	ZKInference       = "ZK-Inference"
+	OPInference       = "OP-inference"
+	PipelineInference = "Pipeline-Inference"
+	PrivateInference  = "Private-Inference"
 )
 
 type InferenceNode struct {
@@ -45,6 +47,7 @@ type InferenceTx struct {
 	Params    string
 	TxType    string
 	Value     string
+	IP        string
 	ZKPayload ZKP
 }
 
@@ -60,11 +63,6 @@ type InferenceConsolidation struct {
 	Result       string
 	Attestations []string
 	Weight       float32
-}
-
-type InferenceConsensus struct {
-	resultMap map[string]InferenceConsolidation
-	mu        sync.Mutex
 }
 
 func (ic InferenceConsolidation) attest(threshold float32, node InferenceNode, result InferenceResult, nodeWeight float32) bool {
@@ -94,15 +92,14 @@ func NewRequestClient(portNum int) *RequestClient {
 }
 
 // Emit inference transaction
-func (rc RequestClient) Emit(tx InferenceTx) (string, error) {
-	nodes := getNodes(tx.TxType)
-	consensus := InferenceConsensus{resultMap: make(map[string]InferenceConsolidation)}
-	resultChan := make(chan string)
+func (rc RequestClient) Emit(tx InferenceTx) ([]byte, error) {
+	nodes := getNodes(tx)
+	resultChan := make(chan []byte)
 	errorChan := make(chan string)
 	var wg sync.WaitGroup
 	for _, node := range nodes {
 		wg.Add(1)
-		go rc.emitToNode(consensus, node, tx, resultChan, errorChan)
+		go rc.emitToNode(node, tx, resultChan, errorChan)
 	}
 
 	timestamp := time.Now().Unix()
@@ -118,15 +115,13 @@ func (rc RequestClient) Emit(tx InferenceTx) (string, error) {
 
 	select {
 	case output := <-resultChan:
-		triggerEvaluate(tx, consensus)
 		return output, nil
-	case <-errorChan:
-		triggerEvaluate(tx, consensus)
-		return "INFERENCE ERROR", errors.New("Could not reach inference consensus")
+	case msg := <-errorChan:
+		return []byte("INFERENCE ERROR"), errors.New(msg)
 	}
 }
 
-func (rc RequestClient) emitToNode(consensus InferenceConsensus, node InferenceNode, tx InferenceTx, resultChan chan<- string, errorChan chan<- string) {
+func (rc RequestClient) emitToNode(node InferenceNode, tx InferenceTx, resultChan chan<- []byte, errorChan chan<- string) {
 	serverAddr := getAddress(node.IPAddress, rc.port)
 	opts := getDialOptions()
 	conn, err := grpc.Dial(serverAddr, opts...)
@@ -137,7 +132,7 @@ func (rc RequestClient) emitToNode(consensus InferenceConsensus, node InferenceN
 	client := NewInferenceClient(conn)
 	var result InferenceResult
 	var inferErr error
-	if tx.TxType == Inference {
+	if tx.TxType == Inference || tx.TxType == PrivateInference {
 		result, inferErr = RunInference(client, tx)
 	} else if tx.TxType == ZKInference {
 		var zkresult ZKInferenceResult
@@ -146,30 +141,16 @@ func (rc RequestClient) emitToNode(consensus InferenceConsensus, node InferenceN
 			errorChan <- "ZKML Proof cannot be validated"
 		}
 		result = InferenceResult{Tx: zkresult.Tx, Node: zkresult.Node, Value: zkresult.Value}
-	} else if tx.TxType == "pipeline" {
+	} else if tx.TxType == PipelineInference {
 		result, inferErr = RunPipeline(client, tx)
 	}
 	if inferErr != nil {
 		errorChan <- inferErr.Error()
 		return
 	}
-	valid, err := validateSignature(node, result)
-	if err != nil || !valid {
-		return
-	}
-	consensus.mu.Lock()
-	if _, ok := consensus.resultMap[result.Value]; !ok {
-		consensus.resultMap[result.Value] = InferenceConsolidation{Tx: tx, Result: result.Value, Attestations: []string{}, Weight: 0}
-	}
-	// Increment results count
-	if val, ok := consensus.resultMap[result.Value]; ok {
-		complete := val.attest(engine.GetWeightThreshold(), node, result, node.Stake)
-		if complete {
-			resultChan <- val.Result
-		}
-	}
-	consensus.mu.Unlock()
-	return
+	print("F")
+	print(result.Value)
+	resultChan <- result.Value
 }
 
 // Runs inference request via gRPC
@@ -199,7 +180,7 @@ func RunZKInference(client InferenceClient, tx InferenceTx) (ZKInferenceResult, 
 // Runs pipeline  request via gRPC
 func RunPipeline(client InferenceClient, tx InferenceTx) (InferenceResult, error) {
 	pipelineParams := buildPipelineParameters(tx)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(60*time.Second))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(100*time.Second))
 	defer cancel()
 	result, err := client.RunPipeline(ctx, pipelineParams)
 	if err != nil {
@@ -209,8 +190,16 @@ func RunPipeline(client InferenceClient, tx InferenceTx) (InferenceResult, error
 }
 
 // Get IP addresses of inference nodes on network
-func getNodes(txType string) []InferenceNode {
-	nodeInfo := engine.NodeLookup()
+func getNodes(tx InferenceTx) []InferenceNode {
+	nodeBalancer := engine.GetNodeBalancer()
+	var nodeInfo []engine.NodeInfo
+	var err error
+	if tx.TxType == PrivateInference {
+		nodeInfo, err = nodeBalancer.PrivateNodeLookup(tx.IP)
+	}
+	if (err != nil) || (len(nodeInfo) == 0) {
+		nodeInfo, _ = nodeBalancer.NodeLookup()
+	}
 	nodes := []InferenceNode{}
 	for i := 0; i < len(nodeInfo); i++ {
 		nodes = append(nodes,
@@ -270,11 +259,6 @@ func HexToBytes(hexString string) ([]byte, error) {
 		return nil, err
 	}
 	return bytes, nil
-}
-
-// Evaluates inference node behavior
-func triggerEvaluate(tx InferenceTx, ic InferenceConsensus) {
-	return
 }
 
 func transactionTimeout(tx InferenceTx) int64 {
