@@ -25,11 +25,13 @@ protoc --go_out=. --go_opt=paths=source_relative \
 */
 
 const (
-	Inference         = "Vanilla-Inference"
-	ZKInference       = "ZK-Inference"
-	OPInference       = "OP-inference"
-	PipelineInference = "Pipeline-Inference"
-	PrivateInference  = "Private-Inference"
+	Inference         = "INFERENCE"
+	ZKInference       = "ZKINFERENCE"
+	OPInference       = "OPTIMISTIC"
+	PipelineInference = "PIPELINE"
+	PrivateInference  = "PRIVATE"
+	Batch             = "BATCH"
+	None              = "NONE"
 )
 
 type InferenceNode struct {
@@ -135,7 +137,7 @@ func (rc RequestClient) emitToNode(node InferenceNode, tx InferenceTx, resultCha
 	if tx.TxType == Inference || tx.TxType == PrivateInference {
 		result, inferErr = RunInference(client, tx)
 	} else if tx.TxType == ZKInference {
-		var zkresult ZKInferenceResult
+		var zkresult InferenceResult
 		zkresult, inferErr = RunZKInference(client, tx)
 		if !validateZKProof(zkresult) {
 			errorChan <- "ZKML Proof cannot be validated"
@@ -166,13 +168,13 @@ func RunInference(client InferenceClient, tx InferenceTx) (InferenceResult, erro
 }
 
 // Runs zkml-secured inference request via gRPC
-func RunZKInference(client InferenceClient, tx InferenceTx) (ZKInferenceResult, error) {
+func RunZKInference(client InferenceClient, tx InferenceTx) (InferenceResult, error) {
 	inferenceParams := buildInferenceParameters(tx)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(transactionTimeout(tx))*time.Second)
 	defer cancel()
 	result, err := client.RunZKInference(ctx, inferenceParams)
 	if err != nil {
-		return ZKInferenceResult{}, errors.New(err.Error())
+		return InferenceResult{}, errors.New(err.Error())
 	}
 	return *result, nil
 }

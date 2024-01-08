@@ -24,8 +24,9 @@ const _ = grpc.SupportPackageIsVersion7
 type InferenceClient interface {
 	// Runs a model inference
 	RunInference(ctx context.Context, in *InferenceParameters, opts ...grpc.CallOption) (*InferenceResult, error)
-	RunZKInference(ctx context.Context, in *InferenceParameters, opts ...grpc.CallOption) (*ZKInferenceResult, error)
+	RunZKInference(ctx context.Context, in *InferenceParameters, opts ...grpc.CallOption) (*InferenceResult, error)
 	RunPipeline(ctx context.Context, in *PipelineParameters, opts ...grpc.CallOption) (*InferenceResult, error)
+	GetCachedInference(ctx context.Context, in *InferenceParameters, opts ...grpc.CallOption) (*InferenceResult, error)
 }
 
 type inferenceClient struct {
@@ -45,8 +46,8 @@ func (c *inferenceClient) RunInference(ctx context.Context, in *InferenceParamet
 	return out, nil
 }
 
-func (c *inferenceClient) RunZKInference(ctx context.Context, in *InferenceParameters, opts ...grpc.CallOption) (*ZKInferenceResult, error) {
-	out := new(ZKInferenceResult)
+func (c *inferenceClient) RunZKInference(ctx context.Context, in *InferenceParameters, opts ...grpc.CallOption) (*InferenceResult, error) {
+	out := new(InferenceResult)
 	err := c.cc.Invoke(ctx, "/inference.Inference/RunZKInference", in, out, opts...)
 	if err != nil {
 		return nil, err
@@ -63,14 +64,24 @@ func (c *inferenceClient) RunPipeline(ctx context.Context, in *PipelineParameter
 	return out, nil
 }
 
+func (c *inferenceClient) GetCachedInference(ctx context.Context, in *InferenceParameters, opts ...grpc.CallOption) (*InferenceResult, error) {
+	out := new(InferenceResult)
+	err := c.cc.Invoke(ctx, "/inference.Inference/GetCachedInference", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // InferenceServer is the server API for Inference service.
 // All implementations must embed UnimplementedInferenceServer
 // for forward compatibility
 type InferenceServer interface {
 	// Runs a model inference
 	RunInference(context.Context, *InferenceParameters) (*InferenceResult, error)
-	RunZKInference(context.Context, *InferenceParameters) (*ZKInferenceResult, error)
+	RunZKInference(context.Context, *InferenceParameters) (*InferenceResult, error)
 	RunPipeline(context.Context, *PipelineParameters) (*InferenceResult, error)
+	GetCachedInference(context.Context, *InferenceParameters) (*InferenceResult, error)
 	mustEmbedUnimplementedInferenceServer()
 }
 
@@ -81,11 +92,14 @@ type UnimplementedInferenceServer struct {
 func (UnimplementedInferenceServer) RunInference(context.Context, *InferenceParameters) (*InferenceResult, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RunInference not implemented")
 }
-func (UnimplementedInferenceServer) RunZKInference(context.Context, *InferenceParameters) (*ZKInferenceResult, error) {
+func (UnimplementedInferenceServer) RunZKInference(context.Context, *InferenceParameters) (*InferenceResult, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RunZKInference not implemented")
 }
 func (UnimplementedInferenceServer) RunPipeline(context.Context, *PipelineParameters) (*InferenceResult, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RunPipeline not implemented")
+}
+func (UnimplementedInferenceServer) GetCachedInference(context.Context, *InferenceParameters) (*InferenceResult, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetCachedInference not implemented")
 }
 func (UnimplementedInferenceServer) mustEmbedUnimplementedInferenceServer() {}
 
@@ -154,6 +168,24 @@ func _Inference_RunPipeline_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Inference_GetCachedInference_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InferenceParameters)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(InferenceServer).GetCachedInference(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/inference.Inference/GetCachedInference",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(InferenceServer).GetCachedInference(ctx, req.(*InferenceParameters))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Inference_ServiceDesc is the grpc.ServiceDesc for Inference service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -172,6 +204,10 @@ var Inference_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RunPipeline",
 			Handler:    _Inference_RunPipeline_Handler,
+		},
+		{
+			MethodName: "GetCachedInference",
+			Handler:    _Inference_GetCachedInference_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
