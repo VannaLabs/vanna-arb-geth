@@ -1,5 +1,5 @@
 package inference
 
-func validateZKProof(result ZKInferenceResult) bool {
+func validateZKProof(result InferenceResult) bool {
 	return true
 }
