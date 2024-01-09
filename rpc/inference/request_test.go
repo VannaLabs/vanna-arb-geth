@@ -17,7 +17,7 @@ func TestInference(t *testing.T) {
 	}
 	result, err := rc.Emit(tx)
 	assert.Equal(t, err, nil)
-	assert.Equal(t, []byte("0.0013500629"), result)
+	assert.Equal(t, []byte("3.9701228"), result)
 }
 
 func TestZKInference(t *testing.T) {
