@@ -266,12 +266,12 @@ func HexToBytes(hexString string) ([]byte, error) {
 func transactionTimeout(tx InferenceTx) int64 {
 	switch tx.TxType {
 	case Inference:
-		return 10
+		return 5
 	case OPInference:
 		return 10
 	case ZKInference:
-		return 90
+		return 20
 	default:
-		return 10
+		return 5
 	}
 }
