@@ -134,9 +134,9 @@ func (rc RequestClient) emitToNode(node InferenceNode, tx InferenceTx, resultCha
 	client := NewInferenceClient(conn)
 	var result InferenceResult
 	var inferErr error
-	if tx.TxType == Inference || tx.TxType == PrivateInference {
+	if tx.TxType == Inference {
 		result, inferErr = RunInference(client, tx)
-	} else if tx.TxType == ZKInference {
+	} else if tx.TxType == ZKInference || tx.TxType == PrivateInference {
 		var zkresult InferenceResult
 		zkresult, inferErr = RunZKInference(client, tx)
 		if !validateZKProof(zkresult) {
