@@ -134,9 +134,9 @@ func (rc RequestClient) emitToNode(node InferenceNode, tx InferenceTx, resultCha
 	client := NewInferenceClient(conn)
 	var result InferenceResult
 	var inferErr error
-	if tx.TxType == Inference || tx.TxType == PrivateInference {
+	if tx.TxType == Inference {
 		result, inferErr = RunInference(client, tx)
-	} else if tx.TxType == ZKInference {
+	} else if tx.TxType == ZKInference || tx.TxType == PrivateInference {
 		var zkresult InferenceResult
 		zkresult, inferErr = RunZKInference(client, tx)
 		if !validateZKProof(zkresult) {
@@ -266,12 +266,12 @@ func HexToBytes(hexString string) ([]byte, error) {
 func transactionTimeout(tx InferenceTx) int64 {
 	switch tx.TxType {
 	case Inference:
-		return 10
+		return 5
 	case OPInference:
 		return 10
 	case ZKInference:
-		return 90
+		return 20
 	default:
-		return 10
+		return 5
 	}
 }
