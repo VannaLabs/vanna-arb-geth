@@ -83,12 +83,14 @@ func (engineNode InferenceNode) inferenceCheck(result InferenceResult) bool {
 type RequestClient struct {
 	port  int
 	txMap map[string]float64
+	zc    *zkmlClient
 }
 
 // Instantiating a new request client
 func NewRequestClient(portNum int) *RequestClient {
 	rc := &RequestClient{
 		port: portNum,
+		zc:   NewzkMLClient(),
 	}
 	return rc
 }
@@ -139,7 +141,7 @@ func (rc RequestClient) emitToNode(node InferenceNode, tx InferenceTx, resultCha
 	} else if tx.TxType == ZKInference || tx.TxType == PrivateInference {
 		var zkresult InferenceResult
 		zkresult, inferErr = RunZKInference(client, tx)
-		if !validateZKProof(zkresult) {
+		if !rc.zc.validateZKProof(zkresult) {
 			errorChan <- "ZKML Proof cannot be validated"
 		}
 		result = InferenceResult{Tx: zkresult.Tx, Node: zkresult.Node, Value: zkresult.Value}
